@@ -16,7 +16,11 @@ export default function StatusBadge({ status }) {
     Pending: 'bg-secondary text-textMain border-slate-200',
     'Under Review': 'bg-secondary text-primary border-accent/30',
     Resolved: 'bg-accent text-white border-accent',
-    Rejected: 'bg-secondary text-textMain border-slate-200'
+    Rejected: 'bg-secondary text-textMain border-slate-200',
+    Verified: 'bg-accent text-white border-accent',
+    'Training Required': 'bg-secondary text-primary border-accent/30',
+    Expired: 'bg-secondary text-textMain/70 border-slate-200',
+    Revoked: 'bg-secondary text-textMain/70 border-slate-200'
   };
   const labels = {
     Requested: 'Pending',

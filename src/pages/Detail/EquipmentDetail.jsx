@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import PageContainer from '../../components/layout/PageContainer';
 import Button from '../../components/common/Button';
@@ -8,20 +8,30 @@ import { useEquipment } from '../../hooks/useEquipment';
 import { useBookings } from '../../hooks/useBookings';
 import { useAuth } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
-import { ArrowLeft, MapPin, ShieldCheck, ClipboardCheck, Upload, Flag } from 'lucide-react';
+import { ArrowLeft, MapPin, ShieldCheck, ClipboardCheck, Flag } from 'lucide-react';
 import { hasRole } from '../../utils/permissions';
+import {
+  getEffectiveQualificationType,
+  getEquipmentCategoryLabel,
+  getQualificationTypeLabel
+} from '../../config/equipmentCategories';
+import { useQualifications } from '../../hooks/useQualifications';
 
 export default function EquipmentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { resources } = useEquipment();
   const { handleBookingRequest, submitReport } = useBookings();
+  const { submitQualification } = useQualifications();
   const { user } = useAuth();
-  const { loading } = useContext(DataContext);
+  const { loading, qualifications, qualificationGrants } = useContext(DataContext);
   
   const res = resources.find(r => r.id === id);
   const [purpose, setPurpose] = useState('');
-  const [file, setFile] = useState(null);
+  const [qualificationFile, setQualificationFile] = useState(null);
+  const [qualificationSubmissionType, setQualificationSubmissionType] = useState('assessment');
+  const [qualificationDetails, setQualificationDetails] = useState('');
+  const [supervisedAccess, setSupervisedAccess] = useState(false);
   const [slot, setSlot] = useState('Tomorrow, 10:00 AM – 2:00 PM');
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportCategory, setReportCategory] = useState('Damage');
@@ -43,6 +53,39 @@ export default function EquipmentDetail() {
   }
   const isOwner = res.ownerUid === user?.uid;
   const canRequest = hasRole(user, 'user') && !isOwner;
+  const requiredQualificationType = getEffectiveQualificationType(res);
+  const requiresQualification = requiredQualificationType !== 'none';
+  const userQualifications = qualifications.filter(qualification => (
+    qualification.userId === user?.uid
+    && qualification.qualificationType === requiredQualificationType
+  ));
+  const verifiedQualification = userQualifications.find(qualification => {
+    const expiresAt = qualification.expiresAt?.toDate
+      ? qualification.expiresAt.toDate()
+      : qualification.expiresAt ? new Date(qualification.expiresAt) : null;
+    const isCurrent = qualification.status === 'Verified' && (!expiresAt || expiresAt > new Date());
+    const hasGrant = qualificationGrants.some(grant => (
+      grant.qualificationId === qualification.id
+      && grant.resourceId === res.id
+      && grant.active
+    ));
+    return isCurrent && (qualification.equipmentId === res.id || hasGrant);
+  });
+  const canRequestWithQualification = !requiresQualification || Boolean(verifiedQualification);
+  const canRequestSupervised = requiresQualification && res.supervisedUseAllowed && supervisedAccess;
+  const canSubmitQualification = requiresQualification && !verifiedQualification;
+  const latestQualification = userQualifications.find(qualification => qualification.equipmentId === res.id);
+
+  useEffect(() => {
+    setQualificationSubmissionType(
+      requiredQualificationType === 'practical_assessment'
+        ? 'assessment'
+        : requiredQualificationType === 'training_proof' ? 'training' : 'certificate'
+    );
+    setQualificationFile(null);
+    setQualificationDetails('');
+    setSupervisedAccess(false);
+  }, [id, requiredQualificationType]);
 
   return (
     <PageContainer>
@@ -60,7 +103,7 @@ export default function EquipmentDetail() {
         <div className="absolute bottom-6 left-6 right-6 flex items-end justify-between">
           <div>
             <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-white border border-white/30 text-xs font-bold mb-3 inline-block">
-              {res.category}
+              {getEquipmentCategoryLabel(res.categoryId || res.category)}
             </span>
             <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">{res.name}</h1>
           </div>
@@ -82,6 +125,8 @@ export default function EquipmentDetail() {
             </div>
             
             <div>
+              {res.description && <p className="mb-5 text-sm leading-relaxed text-textMain/80">{res.description}</p>}
+              {res.subcategory && <p className="mb-5 text-xs font-semibold text-textMain/70">{res.subcategory}</p>}
               <h3 className="text-sm font-bold text-textMain mb-3">Key Information</h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {Object.entries(res.specs).map(([key, value]) => (
@@ -107,6 +152,13 @@ export default function EquipmentDetail() {
                 </ul>
               </div>
             </div>
+            <div className="rounded-xl border border-slate-200 bg-secondary/60 p-5">
+              <h4 className="text-sm font-bold text-textMain">Qualification and safety</h4>
+              <p className="mt-2 text-sm text-textMain/80">{getQualificationTypeLabel(requiredQualificationType)}</p>
+              {res.qualificationInstructions && <p className="mt-2 text-sm text-textMain/80">{res.qualificationInstructions}</p>}
+              {res.safetyInstructions && <p className="mt-2 text-sm text-textMain/80"><strong>Safety:</strong> {res.safetyInstructions}</p>}
+              {res.supervisedUseAllowed && <p className="mt-2 text-xs font-semibold text-textMain/70">Supervised access may be requested if you do not have a verified qualification.</p>}
+            </div>
           </div>
         </div>
 
@@ -116,42 +168,95 @@ export default function EquipmentDetail() {
             <div className="bg-surface rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-7 space-y-6 lg:sticky lg:top-28">
             <div>
               <h2 className="text-xl font-bold text-textMain">Request to Borrow</h2>
-              <p className="text-sm text-textMain/80 mt-1">Choose a time slot and attach your training certificate.</p>
+              <p className="text-sm text-textMain/80 mt-1">Verify any required qualification before requesting independent access.</p>
             </div>
-            
-            <form onSubmit={e => { e.preventDefault(); handleBookingRequest(res, slot, purpose, file?.name, () => navigate('/user-dashboard')); }} className="space-y-5">
-              <div>
-                <label className="block text-sm font-bold text-textMain mb-2">1. Choose a Time Slot</label>
-                <select value={slot} onChange={e => setSlot(e.target.value)} className="w-full px-3.5 py-3 rounded-xl border border-slate-200 bg-surface text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
-                  <option value="Today, 2:00 PM – 6:00 PM">Today, 2:00 PM – 6:00 PM</option>
-                  <option value="Tomorrow, 10:00 AM – 2:00 PM">Tomorrow, 10:00 AM – 2:00 PM</option>
-                  <option value="Thursday, 9:00 AM – 1:00 PM">Thursday, 9:00 AM – 1:00 PM</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-textMain mb-2">2. What will you use it for?</label>
-                <textarea rows={3} required onChange={e => setPurpose(e.target.value)} placeholder="Describe your project..." className="w-full px-3.5 py-3 rounded-xl border border-slate-200 bg-surface text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent" />
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-textMain mb-2">3. Attach Certificate</label>
-                <div className="border-2 border-dashed border-slate-300 rounded-2xl p-5 text-center bg-secondary/70">
-                  <Upload className="w-6 h-6 text-accent mx-auto mb-2" />
-                  {file ? (
-                    <p className="font-bold text-accent text-sm">{file.name}</p>
-                  ) : (
-                    <p className="text-xs text-textMain/80 mb-3">Needed: {res.requirements[0]}</p>
-                  )}
-                  <label className="cursor-pointer px-4 py-2 rounded-lg bg-surface border border-slate-200 hover:border-accent text-xs font-semibold transition-colors inline-block">
-                    Browse File
-                    <input type="file" required accept=".pdf,image/*" className="hidden" onChange={e => setFile(e.target.files[0])} />
-                  </label>
+            {requiresQualification && (
+              <div className="rounded-xl border border-slate-200 bg-secondary/60 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-textMain">{verifiedQualification ? 'Qualification verified' : 'Qualification required'}</p>
+                    <p className="mt-1 text-xs text-textMain/75">{verifiedQualification ? getQualificationTypeLabel(requiredQualificationType) : res.qualificationInstructions || 'Submit evidence or request the required assessment.'}</p>
+                  </div>
+                  {verifiedQualification && <ShieldCheck className="h-5 w-5 shrink-0 text-accent" />}
                 </div>
+                {latestQualification && !verifiedQualification && (
+                  <div className="mt-3 text-xs text-textMain/75">
+                    <StatusBadge status={latestQualification.status} />
+                    {latestQualification.assessmentStatus && latestQualification.assessmentStatus !== 'Not Requested' && <p className="mt-2">Assessment: {latestQualification.assessmentStatus}</p>}
+                    {latestQualification.reviewerNotes && <p className="mt-2">{latestQualification.reviewerNotes}</p>}
+                    {latestQualification.assessmentScheduledAt?.toDate && <p className="mt-2">Assessment: {latestQualification.assessmentScheduledAt.toDate().toLocaleString()}</p>}
+                  </div>
+                )}
               </div>
+            )}
 
-              <Button type="submit" className="w-full py-3.5 mt-2">{res.status === 'Available' ? 'Send Borrow Request' : 'Join Waiting List'}</Button>
-            </form>
+            {canSubmitQualification && (
+              <form onSubmit={async event => {
+                event.preventDefault();
+                if (await submitQualification(res, qualificationSubmissionType, qualificationDetails, qualificationFile)) {
+                  setQualificationFile(null);
+                  setQualificationDetails('');
+                }
+              }} className="space-y-4 rounded-xl border border-slate-200 p-4">
+                <h3 className="text-sm font-bold text-textMain">Submit qualification</h3>
+                {requiredQualificationType === 'practical_assessment' && (
+                  <label className="block text-xs font-bold text-textMain">
+                    Submission type
+                    <select value={qualificationSubmissionType} onChange={event => { setQualificationSubmissionType(event.target.value); setQualificationFile(null); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-surface px-3 py-2.5 text-sm font-normal">
+                      <option value="assessment">Request practical assessment</option>
+                      <option value="experience">Submit previous experience</option>
+                      {res.trainingRequired && <option value="training">Submit training proof</option>}
+                    </select>
+                  </label>
+                )}
+                {(qualificationSubmissionType === 'experience' || qualificationSubmissionType === 'assessment') && (
+                  <textarea rows={3} required maxLength={3000} value={qualificationDetails} onChange={event => setQualificationDetails(event.target.value)} placeholder={qualificationSubmissionType === 'assessment' ? 'Describe your experience and request an assessment.' : 'Describe your relevant experience.'} className="w-full rounded-xl border border-slate-200 bg-surface px-3 py-2.5 text-sm" />
+                )}
+                {['certificate', 'training'].includes(qualificationSubmissionType) && (
+                  <label className="block text-xs font-bold text-textMain">
+                    Evidence (PDF, JPG, PNG, or WebP; private, size limited)
+                    <input type="file" required accept=".pdf,image/jpeg,image/png,image/webp" onChange={event => setQualificationFile(event.target.files?.[0] || null)} className="mt-2 block w-full text-sm font-normal text-textMain file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:font-semibold" />
+                    {qualificationFile && <span className="mt-1 block text-textMain/70">{qualificationFile.name}</span>}
+                  </label>
+                )}
+                <Button type="submit" className="w-full py-3">Submit for Review</Button>
+              </form>
+            )}
+
+            {res.supervisedUseAllowed && (
+              <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 text-sm text-textMain">
+                <input type="checkbox" checked={supervisedAccess} onChange={event => setSupervisedAccess(event.target.checked)} className="mt-1 accent-accent" />
+                <span><strong>Request supervised access</strong><span className="mt-0.5 block text-xs text-textMain/70">The equipment owner must supervise use.</span></span>
+              </label>
+            )}
+
+            {(canRequestWithQualification || canRequestSupervised) && (
+              <form onSubmit={event => {
+                event.preventDefault();
+                handleBookingRequest(
+                  res,
+                  slot,
+                  purpose,
+                  supervisedAccess ? null : verifiedQualification?.id || null,
+                  supervisedAccess,
+                  () => navigate('/user-dashboard')
+                );
+              }} className="space-y-5">
+                <div>
+                  <label className="block text-sm font-bold text-textMain mb-2">Choose a Time Slot</label>
+                  <select value={slot} onChange={event => setSlot(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-surface px-3.5 py-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent">
+                    <option value="Today, 2:00 PM – 6:00 PM">Today, 2:00 PM – 6:00 PM</option>
+                    <option value="Tomorrow, 10:00 AM – 2:00 PM">Tomorrow, 10:00 AM – 2:00 PM</option>
+                    <option value="Thursday, 9:00 AM – 1:00 PM">Thursday, 9:00 AM – 1:00 PM</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-textMain mb-2">What will you use it for?</label>
+                  <textarea rows={3} required value={purpose} onChange={event => setPurpose(event.target.value)} placeholder="Describe your project..." className="w-full rounded-xl border border-slate-200 bg-surface px-3.5 py-3 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent" />
+                </div>
+                <Button type="submit" className="mt-2 w-full py-3.5">{res.status === 'Available' ? 'Send Borrow Request' : 'Join Waiting List'}</Button>
+              </form>
+            )}
             </div>
           ) : (
             <div className="rounded-2xl border border-slate-200 bg-surface p-5 sm:p-7 shadow-sm">

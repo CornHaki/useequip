@@ -5,13 +5,24 @@ import { useEquipment } from '../../hooks/useEquipment';
 import { useContext } from 'react';
 import { DataContext } from '../../context/DataContext';
 import { Search } from 'lucide-react';
+import { EQUIPMENT_CATEGORIES } from '../../config/equipmentCategories';
 
 export default function BrowseEquipment() {
   const { resources } = useEquipment();
   const { loading } = useContext(DataContext);
   const [searchQuery, setSearchQuery] = useState('');
+  const [categoryId, setCategoryId] = useState('all');
 
-  const filtered = resources.filter(res => res.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filtered = resources.filter(res => (
+    categoryId === 'all' || (res.categoryId || res.category) === categoryId
+  ) && [
+    res.name,
+    res.location,
+    res.subcategory,
+    res.categoryId,
+    res.category
+  ].some(value => String(value || '').toLowerCase().includes(normalizedSearch)));
 
   return (
     <PageContainer>
@@ -31,6 +42,18 @@ export default function BrowseEquipment() {
             value={searchQuery} 
             onChange={e => setSearchQuery(e.target.value)} 
           />
+        </div>
+        <div className="mt-3">
+          <label htmlFor="equipment-category-filter" className="sr-only">Filter by category</label>
+          <select
+            id="equipment-category-filter"
+            value={categoryId}
+            onChange={event => setCategoryId(event.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-surface px-4 py-3 text-sm text-textMain focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:w-auto"
+          >
+            <option value="all">All categories</option>
+            {EQUIPMENT_CATEGORIES.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
+          </select>
         </div>
       </div>
 

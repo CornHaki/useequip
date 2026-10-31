@@ -19,6 +19,8 @@ import {
   FileText,
   ShieldCheck
 } from 'lucide-react';
+import { getQualificationTypeLabel } from '../../config/equipmentCategories';
+import PrivateQualificationEvidence from '../../components/common/PrivateQualificationEvidence';
 import { useContext, useState } from 'react';
 
 export default function UserDashboard() {
@@ -26,7 +28,7 @@ export default function UserDashboard() {
   const { resources } = useEquipment();
   const { userActiveBookings, MAX_ACTIVE_BOOKINGS } = useFairUsage();
   const { user } = useAuth();
-  const { loading } = useContext(DataContext);
+  const { loading, qualifications } = useContext(DataContext);
   const navigate = useNavigate();
   const [cancellingId, setCancellingId] = useState(null);
   const [cancellationReason, setCancellationReason] = useState('');
@@ -34,7 +36,11 @@ export default function UserDashboard() {
   const userBookings = bookings.filter(booking => booking.userId === user?.uid && !booking.clearedByUserAt);
   const handoverBookings = userBookings.filter(booking => ['Approved', 'Checked-Out'].includes(booking.status));
   const quotaUsed = Math.min((userActiveBookings.length / MAX_ACTIVE_BOOKINGS) * 100, 100);
-  const certificates = ['Lab Safety', 'Media 101', 'Drone License'];
+  const userQualifications = qualifications.filter(qualification => qualification.userId === user?.uid);
+  const verifiedQualifications = userQualifications.filter(qualification => {
+    const expiresAt = qualification.expiresAt?.toDate ? qualification.expiresAt.toDate() : null;
+    return qualification.status === 'Verified' && (!expiresAt || expiresAt > new Date());
+  });
 
   return (
     <PageContainer width="max-w-7xl">
@@ -119,16 +125,50 @@ export default function UserDashboard() {
             </span>
           </div>
           <p className="mt-4 text-lg font-extrabold text-textMain">
-            <span className="text-2xl">{certificates.length}</span> Certificates
+            <span className="text-2xl">{verifiedQualifications.length}</span> Verified
           </p>
           <div className="flex flex-wrap gap-1.5 mt-2">
-            {certificates.map(certificate => (
-              <span key={certificate} className="px-2 py-1 rounded-md bg-secondary text-textMain text-[11px] font-bold">{certificate}</span>
+            {verifiedQualifications.slice(0, 3).map(qualification => (
+              <span key={qualification.id} className="px-2 py-1 rounded-md bg-secondary text-textMain text-[11px] font-bold">{qualification.equipmentName}</span>
             ))}
           </div>
           <p className="text-xs text-textMain/75 leading-relaxed mt-auto pt-3">
-            Pre-verified on your student profile for 1-click attachment during booking requests.
+            Owner-reviewed qualifications are used to request eligible equipment.
           </p>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-extrabold tracking-tight text-textMain">My Qualifications</h2>
+          <p className="mt-1 text-sm text-textMain/75">Private evidence is visible only to you and the equipment owner reviewing it.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {userQualifications.map(qualification => {
+            const expiresAt = qualification.expiresAt?.toDate ? qualification.expiresAt.toDate() : null;
+            const status = qualification.status === 'Verified' && expiresAt && expiresAt <= new Date()
+              ? 'Expired'
+              : qualification.status;
+            return (
+              <article key={qualification.id} className="rounded-2xl border border-slate-200 bg-surface p-4 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-textMain">{qualification.equipmentName}</h3>
+                    <p className="mt-1 text-xs text-textMain/70">{getQualificationTypeLabel(qualification.qualificationType)}</p>
+                  </div>
+                  <StatusBadge status={status} />
+                </div>
+                {qualification.reviewerNotes && <p className="mt-3 text-sm text-textMain/80">{qualification.reviewerNotes}</p>}
+                {qualification.assessmentStatus && qualification.assessmentStatus !== 'Not Requested' && <p className="mt-2 text-xs text-textMain/70">Assessment: {qualification.assessmentStatus}</p>}
+                {qualification.assessmentScheduledAt?.toDate && <p className="mt-2 text-xs text-textMain/70">Assessment scheduled: {qualification.assessmentScheduledAt.toDate().toLocaleString()}</p>}
+                {expiresAt && <p className="mt-2 text-xs text-textMain/70">Valid until: {expiresAt.toLocaleDateString()}</p>}
+                {qualification.hasEvidence && <PrivateQualificationEvidence qualificationId={qualification.id} fileName={qualification.evidenceName} />}
+              </article>
+            );
+          })}
+          {!loading && userQualifications.length === 0 && (
+            <p className="rounded-2xl border border-slate-200 bg-surface p-5 text-sm text-textMain/75">Qualification requests will appear here after you submit evidence or request an assessment from an equipment listing.</p>
+          )}
         </div>
       </section>
 

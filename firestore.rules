@@ -31,6 +31,68 @@ service cloud.firestore {
       return /databases/$(database)/documents/resources/$(resourceId);
     }
 
+    function normalizedCategory(resource) {
+      let categoryId = resource.get('categoryId', resource.get('category', ''));
+      return categoryId in ['3D Printing & Makerspace', '3D Printing and Makerspace']
+        ? '3d_printing_makerspace'
+        : categoryId in ['Cameras & Media', 'Camera and Media'] ? 'camera_media'
+        : categoryId in ['Drones & Robotics', 'Drones and Robotics'] ? 'drones_robotics'
+        : categoryId == 'Lab Instruments' ? 'lab_instruments'
+        : categoryId == 'Electronics and Electrical' ? 'electronics_electrical'
+        : categoryId == 'Mechanical and Workshop Tools' ? 'mechanical_workshop_tools'
+        : categoryId == 'Computing and Emerging Technology' ? 'computing_emerging_technology'
+        : categoryId == 'Scientific and Environmental Equipment' ? 'scientific_environmental_equipment'
+        : categoryId == 'Safety and Protective Equipment' ? 'safety_protective_equipment'
+        : categoryId in ['Other', 'Other / Miscellaneous'] ? 'other_miscellaneous'
+        : categoryId in [
+          '3d_printing_makerspace', 'camera_media', 'drones_robotics',
+          'lab_instruments', 'electronics_electrical', 'mechanical_workshop_tools',
+          'computing_emerging_technology', 'scientific_environmental_equipment',
+          'safety_protective_equipment', 'other_miscellaneous'
+        ] ? categoryId
+        : 'other_miscellaneous';
+    }
+
+    function effectiveQualificationType(resource) {
+      let configuredType = resource.get('qualificationType', '');
+      return configuredType == ''
+        ? (resource.get('requirements', []).size() > 0 ? 'training_proof' : 'none')
+        : configuredType == 'none' && resource.get('trainingRequired', false) == true
+          ? 'training_proof'
+          : configuredType;
+    }
+
+    function validQualificationSubmission(resource, submissionType) {
+      return (
+        effectiveQualificationType(resource) == 'official_certificate'
+        && submissionType == 'certificate'
+      ) || (
+        effectiveQualificationType(resource) == 'training_proof'
+        && submissionType == 'training'
+      ) || (
+        effectiveQualificationType(resource) == 'practical_assessment'
+        && (
+          submissionType in ['experience', 'assessment']
+          || (
+            resource.get('trainingRequired', false) == true
+            && submissionType == 'training'
+          )
+        )
+      );
+    }
+
+    function qualificationPath(qualificationId) {
+      return /databases/$(database)/documents/qualifications/$(qualificationId);
+    }
+
+    function qualificationGrantPath(qualificationId, resourceId) {
+      return /databases/$(database)/documents/qualificationGrants/$(qualificationId + '_' + resourceId);
+    }
+
+    function qualificationEvidencePath(qualificationId) {
+      return /databases/$(database)/documents/qualificationEvidence/$(qualificationId);
+    }
+
     function bookingPath(bookingId) {
       return /databases/$(database)/documents/bookings/$(bookingId);
     }
@@ -98,6 +160,112 @@ service cloud.firestore {
       );
     }
 
+    function validQualificationAudit(qualificationId, actionLabel) {
+      let qualification = getAfter(qualificationPath(qualificationId)).data;
+      return (
+        actionLabel == 'Qualification Submitted'
+        && qualification.userId == request.auth.uid
+        && qualification.status == 'Pending'
+        && qualification.createdAt == request.time
+      ) || (
+        actionLabel == 'Qualification Verified'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Verified'
+        && qualification.verifiedAt == request.time
+      ) || (
+        actionLabel == 'Qualification Rejected'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Rejected'
+        && qualification.updatedAt == request.time
+      ) || (
+        actionLabel == 'Qualification Revoked'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Revoked'
+        && qualification.updatedAt == request.time
+      ) || (
+        actionLabel == 'Qualification Expired'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Expired'
+        && qualification.updatedAt == request.time
+      ) || (
+        actionLabel == 'Practical Assessment Scheduled'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Pending'
+        && qualification.assessmentStatus == 'Scheduled'
+        && qualification.updatedAt == request.time
+      ) || (
+        actionLabel == 'Practical Assessment Passed'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Verified'
+        && qualification.assessmentStatus == 'Passed'
+        && qualification.verifiedAt == request.time
+      ) || (
+        actionLabel == 'Practical Assessment Failed'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Rejected'
+        && qualification.assessmentStatus == 'Failed'
+        && qualification.updatedAt == request.time
+      ) || (
+        actionLabel == 'Training Required'
+        && qualification.ownerUid == request.auth.uid
+        && qualification.status == 'Training Required'
+        && qualification.assessmentStatus == 'Training Required'
+        && qualification.updatedAt == request.time
+      );
+    }
+
+    function validQualificationGrantAudit(grantId) {
+      let grant = getAfter(
+        /databases/$(database)/documents/qualificationGrants/$(grantId)
+      ).data;
+      return grant.ownerUid == request.auth.uid
+        && grant.active == true
+        && grant.createdAt == request.time;
+    }
+
+    function validBookingQualification(booking, equipment) {
+      return (
+        effectiveQualificationType(equipment) == 'none'
+        && booking.get('qualificationId', null) == null
+        && booking.get('supervisedAccess', false) == false
+      ) || (
+        booking.get('supervisedAccess', false) == true
+        && equipment.get('supervisedUseAllowed', false) == true
+        && booking.get('qualificationId', null) == null
+      ) || (
+        booking.get('supervisedAccess', false) == false
+        && booking.get('qualificationId', null) is string
+        && verifiedQualificationForBooking(booking, equipment)
+      );
+    }
+
+    function verifiedQualificationForBooking(booking, equipment) {
+      let qualificationId = booking.qualificationId;
+      let qualification = get(qualificationPath(qualificationId)).data;
+      return qualification.userId == booking.userId
+        && qualification.ownerUid == booking.ownerUid
+        && qualification.qualificationType == effectiveQualificationType(equipment)
+        && qualification.categoryId == normalizedCategory(equipment)
+        && qualification.status == 'Verified'
+        && (
+          qualification.expiresAt == null
+          || qualification.expiresAt > request.time
+        )
+        && (
+          qualification.equipmentId == booking.resourceId
+          || validQualificationGrantForBooking(booking, qualificationId)
+        );
+    }
+
+    function validQualificationGrantForBooking(booking, qualificationId) {
+      let grant = get(qualificationGrantPath(qualificationId, booking.resourceId)).data;
+      return grant.qualificationId == qualificationId
+        && grant.resourceId == booking.resourceId
+        && grant.userId == booking.userId
+        && grant.ownerUid == booking.ownerUid
+        && grant.active == true;
+    }
+
     function validReportAudit(reportId, actionLabel) {
       let report = getAfter(
         /databases/$(database)/documents/equipmentReports/$(reportId)
@@ -160,9 +328,24 @@ service cloud.firestore {
         && request.resource.data.name.size() >= 2
         && request.resource.data.name.size() <= 120
         && request.resource.data.category is string
+        && request.resource.data.categoryId is string
         && request.resource.data.location is string
         && request.resource.data.imageData is string
         && request.resource.data.imageData.size() <= 250000
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 2000
+        && request.resource.data.subcategory is string
+        && request.resource.data.subcategory.size() <= 120
+        && request.resource.data.qualificationType in [
+          'official_certificate', 'training_proof', 'practical_assessment', 'none'
+        ]
+        && request.resource.data.qualificationInstructions is string
+        && request.resource.data.qualificationInstructions.size() <= 1200
+        && request.resource.data.trainingRequired is bool
+        && request.resource.data.supervisedUseAllowed is bool
+        && request.resource.data.qualificationReusable is bool
+        && request.resource.data.safetyInstructions is string
+        && request.resource.data.safetyInstructions.size() <= 2000
         && request.resource.data.status == 'Available'
         && request.resource.data.get('reservedByBookingId', null) == null
         && request.resource.data.archived == false
@@ -170,14 +353,34 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'name', 'category', 'location', 'imageData', 'requirements',
           'checklist', 'usageRules', 'specs', 'status', 'ownerUid',
-          'ownerName', 'department', 'archived', 'createdAt', 'updatedAt'
+          'ownerName', 'department', 'archived', 'createdAt', 'updatedAt',
+          'categoryId', 'description', 'subcategory', 'qualificationType',
+          'qualificationInstructions', 'trainingRequired', 'supervisedUseAllowed',
+          'qualificationReusable', 'safetyInstructions'
         ]);
 
       allow update: if (
         isOwner(resource.data.ownerUid)
         && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.categoryId is string
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 2000
+        && request.resource.data.subcategory is string
+        && request.resource.data.subcategory.size() <= 120
+        && request.resource.data.qualificationType in [
+          'official_certificate', 'training_proof', 'practical_assessment', 'none'
+        ]
+        && request.resource.data.qualificationInstructions is string
+        && request.resource.data.qualificationInstructions.size() <= 1200
+        && request.resource.data.trainingRequired is bool
+        && request.resource.data.supervisedUseAllowed is bool
+        && request.resource.data.qualificationReusable is bool
+        && request.resource.data.safetyInstructions is string
+        && request.resource.data.safetyInstructions.size() <= 2000
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'category', 'location', 'imageData', 'requirements', 'checklist',
+          'name', 'category', 'categoryId', 'location', 'imageData', 'requirements', 'checklist',
+          'description', 'subcategory', 'qualificationType', 'qualificationInstructions',
+          'trainingRequired', 'supervisedUseAllowed', 'qualificationReusable', 'safetyInstructions',
           'usageRules', 'updatedAt', 'status', 'archived', 'archivedAt',
           'archivedByUid', 'reservedByBookingId'
         ])
@@ -273,6 +476,10 @@ service cloud.firestore {
         && get(resourcePath(request.resource.data.resourceId)).data.name
           == request.resource.data.resourceName
         && get(resourcePath(request.resource.data.resourceId)).data.get('archived', false) == false
+        && validBookingQualification(
+          request.resource.data,
+          get(resourcePath(request.resource.data.resourceId)).data
+        )
         && request.resource.data.status == (
           get(resourcePath(request.resource.data.resourceId)).data.status == 'Available'
           && get(resourcePath(request.resource.data.resourceId)).data.get('reservedByBookingId', null) == null
@@ -288,7 +495,7 @@ service cloud.firestore {
           'resourceId', 'resourceName', 'ownerUid', 'userId', 'userName',
           'dateSlot', 'purpose', 'certificateName', 'status', 'createdAt',
           'updatedAt', 'checkInData', 'checkOutData', 'returnCondition',
-          'clearedByUserAt'
+          'clearedByUserAt', 'qualificationId', 'supervisedAccess'
         ])
         && hasAuditAfter(
           bookingId,
@@ -356,6 +563,10 @@ service cloud.firestore {
             && (
               request.resource.data.status != 'Approved'
               || bookingResourceIsReserved(bookingId, resource.data.resourceId)
+                && validBookingQualification(
+                  request.resource.data,
+                  get(resourcePath(resource.data.resourceId)).data
+                )
             )
             && (
               request.resource.data.status != 'Rejected'
@@ -443,6 +654,285 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /qualifications/{qualificationId} {
+      allow read: if activeAccount()
+        && (resource.data.userId == request.auth.uid
+          || isOwner(resource.data.ownerUid));
+
+      allow create: if activeAccount()
+        && hasUserRole(profile(request.auth.uid))
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.userName == profile(request.auth.uid).name
+        && request.resource.data.ownerUid != request.auth.uid
+        && request.resource.data.equipmentId is string
+        && get(resourcePath(request.resource.data.equipmentId)).data.ownerUid
+          == request.resource.data.ownerUid
+        && request.resource.data.equipmentName
+          == get(resourcePath(request.resource.data.equipmentId)).data.name
+        && request.resource.data.categoryId
+          == normalizedCategory(get(resourcePath(request.resource.data.equipmentId)).data)
+        && request.resource.data.qualificationType
+          == effectiveQualificationType(get(resourcePath(request.resource.data.equipmentId)).data)
+        && request.resource.data.qualificationType in [
+          'official_certificate', 'training_proof', 'practical_assessment'
+        ]
+        && validQualificationSubmission(
+          get(resourcePath(request.resource.data.equipmentId)).data,
+          request.resource.data.submissionType
+        )
+        && (
+          request.resource.data.hasEvidence == (request.resource.data.submissionType in ['certificate', 'training'])
+        )
+        && request.resource.data.hasEvidence is bool
+        && request.resource.data.evidenceName is string
+        && request.resource.data.evidenceName.size() <= 255
+        && request.resource.data.evidenceMimeType in [
+          '', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp'
+        ]
+        && (
+          request.resource.data.hasEvidence == false
+          || (
+            getAfter(qualificationEvidencePath(qualificationId)).data.userId
+              == request.resource.data.userId
+            && getAfter(qualificationEvidencePath(qualificationId)).data.ownerUid
+              == request.resource.data.ownerUid
+            && getAfter(qualificationEvidencePath(qualificationId)).data.fileName
+              == request.resource.data.evidenceName
+            && getAfter(qualificationEvidencePath(qualificationId)).data.mimeType
+              == request.resource.data.evidenceMimeType
+          )
+        )
+        && request.resource.data.experienceDetails is string
+        && request.resource.data.experienceDetails.size() <= 3000
+        && (
+          !(request.resource.data.submissionType in ['experience', 'assessment'])
+          || request.resource.data.experienceDetails.size() > 0
+        )
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.reviewerNotes == ''
+        && request.resource.data.assessmentStatus
+          == (request.resource.data.submissionType == 'assessment' ? 'Requested' : 'Not Requested')
+        && request.resource.data.assessmentScheduledAt == null
+        && request.resource.data.assessmentResult == ''
+        && request.resource.data.verifiedAt == null
+        && request.resource.data.expiresAt == null
+        && request.resource.data.reviewedByUid == ''
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'userId', 'userName', 'ownerUid', 'equipmentId', 'equipmentName',
+          'categoryId', 'qualificationType', 'submissionType', 'experienceDetails',
+          'hasEvidence', 'evidenceName', 'evidenceMimeType', 'status',
+          'reviewerNotes', 'assessmentStatus', 'assessmentScheduledAt',
+          'assessmentResult', 'verifiedAt', 'expiresAt', 'reviewedByUid',
+          'createdAt', 'updatedAt'
+        ])
+        && hasAuditAfter(
+          qualificationId,
+          'qualification',
+          'Qualification Submitted',
+          request.resource.data.ownerUid
+        );
+
+      allow update: if isOwner(resource.data.ownerUid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'reviewerNotes', 'reviewedByUid', 'updatedAt', 'verifiedAt',
+          'expiresAt', 'assessmentStatus', 'assessmentScheduledAt', 'assessmentResult'
+        ])
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.equipmentId == resource.data.equipmentId
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.reviewedByUid == request.auth.uid
+        && request.resource.data.reviewerNotes is string
+        && request.resource.data.reviewerNotes.size() <= 2000
+        && (
+          (
+            resource.data.status == 'Pending'
+            && request.resource.data.status == 'Verified'
+            && request.resource.data.verifiedAt == request.time
+            && (
+              resource.data.submissionType != 'assessment'
+              || (
+                resource.data.assessmentStatus == 'Scheduled'
+                && request.resource.data.assessmentStatus == 'Passed'
+              )
+            )
+            && (
+              request.resource.data.expiresAt == null
+              || (
+                request.resource.data.expiresAt is timestamp
+                && request.resource.data.expiresAt > request.time
+              )
+            )
+            && hasAuditAfter(
+              qualificationId,
+              'qualification',
+              resource.data.submissionType == 'assessment'
+                ? 'Practical Assessment Passed'
+                : 'Qualification Verified',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.status == 'Pending'
+            && request.resource.data.status == 'Rejected'
+            && (
+              resource.data.submissionType != 'assessment'
+              || (
+                resource.data.assessmentStatus == 'Scheduled'
+                && request.resource.data.assessmentStatus == 'Failed'
+              )
+            )
+            && hasAuditAfter(
+              qualificationId,
+              'qualification',
+              resource.data.submissionType == 'assessment'
+                ? 'Practical Assessment Failed'
+                : 'Qualification Rejected',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.status == 'Pending'
+            && request.resource.data.status == 'Pending'
+            && resource.data.submissionType == 'assessment'
+            && request.resource.data.assessmentStatus == 'Scheduled'
+            && request.resource.data.assessmentScheduledAt is timestamp
+            && hasAuditAfter(
+              qualificationId,
+              'qualification',
+              'Practical Assessment Scheduled',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.status == 'Pending'
+            && request.resource.data.status == 'Training Required'
+            && resource.data.submissionType == 'assessment'
+            && resource.data.assessmentStatus == 'Scheduled'
+            && request.resource.data.assessmentStatus == 'Training Required'
+            && hasAuditAfter(
+              qualificationId,
+              'qualification',
+              'Training Required',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.status == 'Verified'
+            && request.resource.data.status in ['Expired', 'Revoked']
+            && hasAuditAfter(
+              qualificationId,
+              'qualification',
+              request.resource.data.status == 'Expired'
+                ? 'Qualification Expired'
+                : 'Qualification Revoked',
+              resource.data.ownerUid
+            )
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /qualificationEvidence/{qualificationId} {
+      allow read: if activeAccount()
+        && (
+          get(qualificationPath(qualificationId)).data.userId == request.auth.uid
+          || isOwner(get(qualificationPath(qualificationId)).data.ownerUid)
+        );
+
+      allow create: if activeAccount()
+        && hasUserRole(profile(request.auth.uid))
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.dataUrl is string
+        && request.resource.data.dataUrl.size() <= 450000
+        && request.resource.data.fileName is string
+        && request.resource.data.fileName.size() > 0
+        && request.resource.data.fileName.size() <= 255
+        && request.resource.data.mimeType in [
+          'application/pdf', 'image/jpeg', 'image/png', 'image/webp'
+        ]
+        && (
+          (
+            request.resource.data.mimeType == 'application/pdf'
+            && request.resource.data.dataUrl.matches('^data:application/pdf;base64,.*$')
+          )
+          || (
+            request.resource.data.mimeType == 'image/jpeg'
+            && request.resource.data.dataUrl.matches('^data:image/jpeg;base64,.*$')
+          )
+          || (
+            request.resource.data.mimeType == 'image/png'
+            && request.resource.data.dataUrl.matches('^data:image/png;base64,.*$')
+          )
+          || (
+            request.resource.data.mimeType == 'image/webp'
+            && request.resource.data.dataUrl.matches('^data:image/webp;base64,.*$')
+          )
+        )
+        && request.resource.data.keys().hasOnly([
+          'userId', 'ownerUid', 'fileName', 'mimeType', 'dataUrl', 'createdAt'
+        ])
+        && getAfter(qualificationPath(qualificationId)).data.userId
+          == request.resource.data.userId
+        && getAfter(qualificationPath(qualificationId)).data.ownerUid
+          == request.resource.data.ownerUid
+        && getAfter(qualificationPath(qualificationId)).data.hasEvidence == true
+        && getAfter(qualificationPath(qualificationId)).data.evidenceName
+          == request.resource.data.fileName
+        && getAfter(qualificationPath(qualificationId)).data.evidenceMimeType
+          == request.resource.data.mimeType;
+
+      allow update, delete: if false;
+    }
+
+    match /qualificationGrants/{grantId} {
+      allow read: if activeAccount()
+        && (resource.data.userId == request.auth.uid
+          || isOwner(resource.data.ownerUid));
+
+      allow create: if activeAccount()
+        && isOwner(request.resource.data.ownerUid)
+        && grantId == request.resource.data.qualificationId + '_' + request.resource.data.resourceId
+        && request.resource.data.active == true
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'qualificationId', 'userId', 'ownerUid', 'resourceId', 'resourceName',
+          'categoryId', 'qualificationType', 'active', 'createdAt'
+        ])
+        && get(qualificationPath(request.resource.data.qualificationId)).data.userId
+          == request.resource.data.userId
+        && get(qualificationPath(request.resource.data.qualificationId)).data.ownerUid
+          == request.auth.uid
+        && get(qualificationPath(request.resource.data.qualificationId)).data.status == 'Verified'
+        && (
+          get(qualificationPath(request.resource.data.qualificationId)).data.expiresAt == null
+          || get(qualificationPath(request.resource.data.qualificationId)).data.expiresAt > request.time
+        )
+        && get(qualificationPath(request.resource.data.qualificationId)).data.qualificationType
+          == request.resource.data.qualificationType
+        && get(resourcePath(request.resource.data.resourceId)).data.ownerUid == request.auth.uid
+        && get(resourcePath(request.resource.data.resourceId)).data.get('qualificationReusable', false) == true
+        && effectiveQualificationType(get(resourcePath(request.resource.data.resourceId)).data)
+          == request.resource.data.qualificationType
+        && normalizedCategory(get(resourcePath(request.resource.data.resourceId)).data)
+          == request.resource.data.categoryId
+        && request.resource.data.resourceName
+          == get(resourcePath(request.resource.data.resourceId)).data.name
+        && hasAuditAfter(
+          request.resource.data.qualificationId + '_' + request.resource.data.resourceId,
+          'qualificationGrant',
+          'Qualification Shared',
+          request.resource.data.ownerUid
+        );
+
+      allow update, delete: if false;
+    }
+
     match /equipmentReports/{reportId} {
       allow read: if activeAccount()
         && (resource.data.userId == request.auth.uid
@@ -516,7 +1006,9 @@ service cloud.firestore {
         && request.resource.data.relatedId is string
         && request.resource.data.ownerUid is string
         && request.resource.data.userId is string
-        && request.resource.data.relatedType in ['booking', 'equipmentReport']
+        && request.resource.data.relatedType in [
+          'booking', 'equipmentReport', 'qualification', 'qualificationGrant'
+        ]
         && request.resource.data.role in ['Owner', 'Borrower']
         && request.resource.data.createdAt == request.time
         && (
@@ -543,6 +1035,27 @@ service cloud.firestore {
               request.resource.data.relatedId,
               request.resource.data.actionLabel
             )
+          )
+          || (
+            request.resource.data.relatedType == 'qualification'
+            && getAfter(qualificationPath(request.resource.data.relatedId)).data.userId
+              == request.resource.data.userId
+            && getAfter(qualificationPath(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.ownerUid
+            && validQualificationAudit(
+              request.resource.data.relatedId,
+              request.resource.data.actionLabel
+            )
+          )
+          || (
+            request.resource.data.relatedType == 'qualificationGrant'
+            && getAfter(
+              /databases/$(database)/documents/qualificationGrants/$(request.resource.data.relatedId)
+            ).data.userId == request.resource.data.userId
+            && getAfter(
+              /databases/$(database)/documents/qualificationGrants/$(request.resource.data.relatedId)
+            ).data.ownerUid == request.resource.data.ownerUid
+            && validQualificationGrantAudit(request.resource.data.relatedId)
           )
         );
       allow update, delete: if false;
@@ -574,6 +1087,38 @@ service cloud.firestore {
             request.resource.data.type == 'equipment-report'
             && getAfter(/databases/$(database)/documents/equipmentReports/$(request.resource.data.relatedId)).data.userId == request.auth.uid
             && getAfter(/databases/$(database)/documents/equipmentReports/$(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.recipientUid
+          )
+          || (
+            request.resource.data.type == 'qualification-submission'
+            && getAfter(qualificationPath(request.resource.data.relatedId)).data.userId
+              == request.auth.uid
+            && getAfter(qualificationPath(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.recipientUid
+          )
+          || (
+            request.resource.data.type == 'qualification-shared'
+            && getAfter(
+              /databases/$(database)/documents/qualificationGrants/$(request.resource.data.relatedId)
+            ).data.userId == request.auth.uid
+            && getAfter(
+              /databases/$(database)/documents/qualificationGrants/$(request.resource.data.relatedId)
+            ).data.ownerUid == request.resource.data.recipientUid
+          )
+          || (
+            request.resource.data.type in [
+              'qualification-qualification-verified',
+              'qualification-qualification-rejected',
+              'qualification-practical-assessment-scheduled',
+              'qualification-practical-assessment-passed',
+              'qualification-practical-assessment-failed',
+              'qualification-training-required',
+              'qualification-qualification-revoked',
+              'qualification-qualification-expired'
+            ]
+            && getAfter(qualificationPath(request.resource.data.relatedId)).data.ownerUid
+              == request.auth.uid
+            && getAfter(qualificationPath(request.resource.data.relatedId)).data.userId
               == request.resource.data.recipientUid
           )
         );

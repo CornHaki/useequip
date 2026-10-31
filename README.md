@@ -31,9 +31,11 @@ Firebase Hosting can be deployed separately if already configured. These command
 
 ## Firestore data and authorization
 
-The app uses the existing `users`, `resources`, `bookings`, `equipmentReports`, `auditLogs`, and `notifications` collections. Booking, report, equipment, cancellation, and return operations write directly through Firestore transactions. `firestore.rules` checks caller identity, the immutable single role, ownership, and linked booking/resource transitions; records are retained instead of hard-deleted.
+The app uses the `users`, `resources`, `bookings`, `qualifications`, `qualificationEvidence`, `qualificationGrants`, `equipmentReports`, `auditLogs`, and `notifications` collections. Booking, report, equipment, qualification, cancellation, and return operations write directly through Firestore transactions. `firestore.rules` checks caller identity, the immutable single role, ownership, private qualification evidence, and linked booking/resource transitions; records are retained instead of hard-deleted.
 
 Equipment photos, report photos, and handover photos are compressed in the browser and stored as Firestore data URLs, with an encoded length limit of 250,000 characters per image. This avoids Cloud Storage, but is less storage-efficient. Older equipment documents that only reference a Cloud Storage `imagePath` need a new photo uploaded to display in the Spark-only app.
+
+Equipment owners can choose a category, qualification type, training/safety instructions, supervised-use policy, and whether a verified qualification may be explicitly shared with another matching listing. Borrowers submit certificate/training evidence or request a practical assessment. Evidence is stored separately in `qualificationEvidence`, private to the submitting user and the equipment owner, limited to 450,000 encoded characters, and accepts PDF/JPEG/PNG/WebP. Bookings for qualified equipment require a current verified record or an owner-approved supervised-use request. Deploy the updated Firestore rules and indexes before using these features.
 
 Booking records retain the existing internal lifecycle values for compatibility. The interface displays them as Pending, Approved, Waitlisted, Declined, Borrowed, Return Requested, and Returned. A return remains pending inspection until its equipment owner records the condition.
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import StatusBadge from '../common/StatusBadge';
 import { MapPin, ArrowRight } from 'lucide-react';
+import { getEquipmentCategoryLabel } from '../../config/equipmentCategories';
 
 export default function EquipmentCard({ res }) {
   const navigate = useNavigate();
@@ -14,7 +15,7 @@ export default function EquipmentCard({ res }) {
         
         <div className="absolute top-4 left-4">
           <span className="px-3 py-1 rounded-full bg-white/90 backdrop-blur-md text-textMain border border-white/50 text-xs font-bold shadow-sm">
-            {res.category}
+            {getEquipmentCategoryLabel(res.categoryId || res.category)}
           </span>
         </div>
         <div className="absolute top-4 right-4">

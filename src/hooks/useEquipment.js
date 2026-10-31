@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { db } from '../firebase';
 import { imageFileToDataUrl } from '../services/imageData';
+import { getEquipmentCategoryId } from '../config/equipmentCategories';
 
 const listValues = (value, fallback = []) => value
   ? value.split(',').map(item => item.trim()).filter(Boolean)
@@ -23,7 +24,16 @@ export function useEquipment() {
       await runTransaction(db, async transaction => {
         transaction.set(resourceRef, {
           name: form.name.trim(),
-          category: form.category,
+          category: getEquipmentCategoryId(form.category),
+          categoryId: getEquipmentCategoryId(form.category),
+          description: (form.description || '').trim(),
+          subcategory: (form.subcategory || '').trim(),
+          qualificationType: form.qualificationType || 'none',
+          qualificationInstructions: (form.qualificationInstructions || '').trim(),
+          trainingRequired: Boolean(form.trainingRequired),
+          supervisedUseAllowed: Boolean(form.supervisedUseAllowed),
+          qualificationReusable: Boolean(form.qualificationReusable),
+          safetyInstructions: (form.safetyInstructions || '').trim(),
           location: form.location.trim(),
           imageData,
           requirements: listValues(form.requirements, ['General Safety']),
@@ -85,7 +95,16 @@ export function useEquipment() {
         }
         transaction.update(resourceRef, {
           name: form.name.trim(),
-          category: form.category,
+          category: getEquipmentCategoryId(form.category),
+          categoryId: getEquipmentCategoryId(form.category),
+          description: (form.description || '').trim(),
+          subcategory: (form.subcategory || '').trim(),
+          qualificationType: form.qualificationType || 'none',
+          qualificationInstructions: (form.qualificationInstructions || '').trim(),
+          trainingRequired: Boolean(form.trainingRequired),
+          supervisedUseAllowed: Boolean(form.supervisedUseAllowed),
+          qualificationReusable: Boolean(form.qualificationReusable),
+          safetyInstructions: (form.safetyInstructions || '').trim(),
           location: form.location.trim(),
           imageData,
           requirements: listValues(form.requirements),

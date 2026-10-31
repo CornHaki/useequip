@@ -10,45 +10,11 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { db } from '../firebase';
 import { imageFileToDataUrl } from '../services/imageData';
+import { createAudit, createNotification } from '../services/activityRecords';
 import { useFairUsage } from './useFairUsage';
+import { getEffectiveQualificationType, getEquipmentCategoryId } from '../config/equipmentCategories';
 
 const CANCELABLE_STATUSES = ['Requested', 'Waitlisted', 'Approved'];
-
-function auditRecord(uid, user, ownerUid, details, relatedId, relatedType, relatedUserUid) {
-  return {
-    actorUid: uid,
-    actor: user.name || user.email || uid,
-    role: user.role === 'admin' ? 'Owner' : 'Borrower',
-    userId: relatedUserUid,
-    ownerUid,
-    actionLabel: details.action,
-    relatedId,
-    relatedType,
-    resourceName: details.resourceName,
-    details: details.details,
-    createdAt: serverTimestamp()
-  };
-}
-
-function createAudit(transaction, user, ownerUid, details, relatedId, relatedType = 'booking', relatedUserUid = user.uid) {
-  const auditId = `${relatedId}_${details.action}`;
-  transaction.set(
-    doc(db, 'auditLogs', auditId),
-    auditRecord(user.uid, user, ownerUid, details, relatedId, relatedType, relatedUserUid)
-  );
-}
-
-function createNotification(transaction, recipientUid, title, message, relatedId, type) {
-  transaction.set(doc(db, 'notifications', `${relatedId}_${type}`), {
-    recipientUid,
-    title,
-    message,
-    relatedId,
-    type,
-    read: false,
-    createdAt: serverTimestamp()
-  });
-}
 
 export function useBookings() {
   const { bookings } = useContext(DataContext);
@@ -67,7 +33,7 @@ export function useBookings() {
     }
   };
 
-  const handleBookingRequest = (resource, dateSlot, purpose, certificateName, onSuccess) => {
+  const handleBookingRequest = (resource, dateSlot, purpose, qualificationId, supervisedAccess, onSuccess) => {
     if (isQuotaReached) {
       showToast('Borrowing Limit Reached', 'You already have two active bookings.');
       return Promise.resolve(false);
@@ -82,6 +48,37 @@ export function useBookings() {
         const equipment = resourceSnapshot.data();
         if (equipment.ownerUid === user.uid) throw new Error('You cannot request your own equipment.');
         if (equipment.archived) throw new Error('This equipment is no longer listed.');
+        const requiredType = getEffectiveQualificationType(equipment);
+        if (supervisedAccess) {
+          if (!equipment.supervisedUseAllowed) throw new Error('The owner has not enabled supervised access.');
+          if (qualificationId) throw new Error('Choose either a verified qualification or supervised access.');
+        } else if (requiredType !== 'none') {
+          if (!qualificationId) throw new Error('A verified qualification is required for independent access.');
+          const qualificationRef = doc(db, 'qualifications', qualificationId);
+          const qualificationSnapshot = await transaction.get(qualificationRef);
+          if (!qualificationSnapshot.exists()) throw new Error('The selected qualification could not be found.');
+          const qualification = qualificationSnapshot.data();
+          const expired = qualification.expiresAt?.toDate && qualification.expiresAt.toDate() <= new Date();
+          if (
+            qualification.userId !== user.uid
+            || qualification.ownerUid !== equipment.ownerUid
+            || qualification.qualificationType !== requiredType
+            || qualification.categoryId !== getEquipmentCategoryId(equipment.categoryId || equipment.category)
+            || qualification.status !== 'Verified'
+            || expired
+          ) {
+            throw new Error('This qualification is not valid for the selected equipment.');
+          }
+          if (qualification.equipmentId !== resource.id) {
+            const grantRef = doc(db, 'qualificationGrants', `${qualificationId}_${resource.id}`);
+            const grantSnapshot = await transaction.get(grantRef);
+            if (!grantSnapshot.exists() || !grantSnapshot.data().active) {
+              throw new Error('This qualification has not been shared with the selected equipment.');
+            }
+          }
+        } else if (qualificationId) {
+          throw new Error('This equipment does not require a qualification.');
+        }
         const status = equipment.status === 'Available' && !equipment.reservedByBookingId
           ? 'Requested'
           : 'Waitlisted';
@@ -93,7 +90,9 @@ export function useBookings() {
           userName: user.name,
           dateSlot,
           purpose: purpose.trim(),
-          certificateName: certificateName || '',
+          certificateName: '',
+          qualificationId: qualificationId || null,
+          supervisedAccess: Boolean(supervisedAccess),
           status,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -203,6 +202,32 @@ export function useBookings() {
           const resourceSnapshot = await transaction.get(resourceRef);
           if (!resourceSnapshot.exists() || resourceSnapshot.data().status !== 'Available' || resourceSnapshot.data().reservedByBookingId) {
             throw new Error('Equipment is unavailable or assigned. Waitlist this request instead.');
+          }
+          const equipment = resourceSnapshot.data();
+          if (!booking.supervisedAccess && getEffectiveQualificationType(equipment) !== 'none') {
+            if (!booking.qualificationId) throw new Error('A verified qualification is required before approval.');
+            const qualificationRef = doc(db, 'qualifications', booking.qualificationId);
+            const qualificationSnapshot = await transaction.get(qualificationRef);
+            if (!qualificationSnapshot.exists()) throw new Error('The qualification attached to this request was not found.');
+            const qualification = qualificationSnapshot.data();
+            const expired = qualification.expiresAt?.toDate && qualification.expiresAt.toDate() <= new Date();
+            if (
+              qualification.status !== 'Verified'
+              || qualification.userId !== booking.userId
+              || qualification.ownerUid !== booking.ownerUid
+              || qualification.qualificationType !== getEffectiveQualificationType(equipment)
+              || qualification.categoryId !== getEquipmentCategoryId(equipment.categoryId || equipment.category)
+              || expired
+            ) {
+              throw new Error('The attached qualification is no longer valid. Ask the borrower to submit a current qualification.');
+            }
+            if (qualification.equipmentId !== booking.resourceId) {
+              const grantRef = doc(db, 'qualificationGrants', `${booking.qualificationId}_${booking.resourceId}`);
+              const grantSnapshot = await transaction.get(grantRef);
+              if (!grantSnapshot.exists() || !grantSnapshot.data().active) {
+                throw new Error('This qualification is no longer shared with the requested equipment.');
+              }
+            }
           }
           transaction.update(resourceRef, { reservedByBookingId: bookingId, updatedAt: serverTimestamp() });
         }

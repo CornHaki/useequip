@@ -6,7 +6,27 @@ import { useBookings } from '../../hooks/useBookings';
 import { useEquipment } from '../../hooks/useEquipment';
 import { useAuth } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
-import { Plus, Camera, CheckCircle2, X, XCircle, Sparkles, Clock, FileText, PackageCheck, ShieldCheck, Wrench, Flag, Bell, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Camera, CheckCircle2, X, XCircle, Sparkles, Clock, PackageCheck, ShieldCheck, Wrench, Flag, Bell, Pencil, Trash2 } from 'lucide-react';
+import { EQUIPMENT_CATEGORIES, QUALIFICATION_TYPES, getEquipmentCategoryId } from '../../config/equipmentCategories';
+import QualificationManagement from '../../components/admin/QualificationManagement';
+import PrivateQualificationEvidence from '../../components/common/PrivateQualificationEvidence';
+
+const EMPTY_EQUIPMENT_FORM = {
+  name: '',
+  category: '3d_printing_makerspace',
+  location: '',
+  description: '',
+  subcategory: '',
+  requirements: '',
+  checklist: '',
+  qualificationType: 'none',
+  qualificationInstructions: '',
+  trainingRequired: false,
+  supervisedUseAllowed: false,
+  qualificationReusable: false,
+  safetyInstructions: '',
+  image: null
+};
 
 const formatTimestamp = (timestamp) => timestamp?.toDate
   ? timestamp.toDate().toLocaleString()
@@ -16,11 +36,11 @@ export default function AdminDashboard() {
   const { bookings, handleOwnerDecision, resolveReturn, updateReportStatus } = useBookings();
   const { resources, handleCreateResource, updateResource, archiveResource, updateResourceStatus } = useEquipment();
   const { user } = useAuth();
-  const { reports, notifications, loading } = useContext(DataContext);
+  const { reports, notifications, qualifications, loading } = useContext(DataContext);
   const [showAddModal, setShowAddModal] = useState(false);
   const [rejectingId, setRejectingId] = useState(null);
   const [rejectReason, setRejectReason] = useState('Please upload the required safety training certificate.');
-  const [newEqForm, setNewEqForm] = useState({ name: '', category: '3D Printing & Makerspace', location: '', requirements: '', checklist: '', image: null });
+  const [newEqForm, setNewEqForm] = useState(EMPTY_EQUIPMENT_FORM);
   const [imagePreview, setImagePreview] = useState('');
   const [hideExistingImage, setHideExistingImage] = useState(false);
   const [editingResource, setEditingResource] = useState(null);
@@ -40,7 +60,7 @@ export default function AdminDashboard() {
 
   const openAddResource = () => {
     setEditingResource(null);
-    setNewEqForm({ name: '', category: '3D Printing & Makerspace', location: '', requirements: '', checklist: '', image: null });
+    setNewEqForm(EMPTY_EQUIPMENT_FORM);
     setImagePreview('');
     setHideExistingImage(false);
     setShowAddModal(true);
@@ -49,7 +69,7 @@ export default function AdminDashboard() {
   const resetEquipmentForm = () => {
     setShowAddModal(false);
     setEditingResource(null);
-    setNewEqForm({ name: '', category: '3D Printing & Makerspace', location: '', requirements: '', checklist: '', image: null });
+    setNewEqForm(EMPTY_EQUIPMENT_FORM);
     setImagePreview('');
     setHideExistingImage(false);
   };
@@ -66,10 +86,18 @@ export default function AdminDashboard() {
     setEditingResource(resource);
     setNewEqForm({
       name: resource.name,
-      category: resource.category,
+      category: resource.categoryId || getEquipmentCategoryId(resource.category),
       location: resource.location,
+      description: resource.description || '',
+      subcategory: resource.subcategory || '',
       requirements: (resource.requirements || []).join(', '),
       checklist: (resource.checklist || []).join(', '),
+      qualificationType: resource.qualificationType || 'none',
+      qualificationInstructions: resource.qualificationInstructions || '',
+      trainingRequired: Boolean(resource.trainingRequired),
+      supervisedUseAllowed: Boolean(resource.supervisedUseAllowed),
+      qualificationReusable: Boolean(resource.qualificationReusable),
+      safetyInstructions: resource.safetyInstructions || '',
       image: null
     });
     setImagePreview('');
@@ -124,6 +152,8 @@ export default function AdminDashboard() {
       </section>
 
       <div className="space-y-10 sm:space-y-12">
+        <QualificationManagement />
+
         {/* Pending Approvals */}
         <section className="space-y-5">
           <div>
@@ -140,11 +170,20 @@ export default function AdminDashboard() {
                   </div>
                   <p className="text-sm text-textMain"><strong>Requested by:</strong> {booking.userName} • <span className="text-textMain/80">{booking.dateSlot}</span></p>
                   <p className="text-sm text-textMain"><strong>What it will be used for:</strong> <span className="text-textMain/80">{booking.purpose}</span></p>
-                  <div className="pt-2">
-                    <span className="inline-flex max-w-full items-center gap-2 break-all px-3 py-1.5 rounded-lg bg-secondary text-primary border border-slate-200 text-xs font-semibold">
-                      <FileText className="w-4 h-4"/> Attached Certificate: {booking.certificateName}
-                    </span>
-                  </div>
+                  {booking.supervisedAccess ? (
+                    <p className="pt-2 text-xs font-bold text-primary">Supervised access requested</p>
+                  ) : booking.qualificationId ? (
+                    <div className="pt-2">
+                      {(() => {
+                        const qualification = qualifications.find(item => item.id === booking.qualificationId);
+                        return qualification?.hasEvidence ? (
+                          <PrivateQualificationEvidence qualificationId={qualification.id} fileName={qualification.evidenceName || 'qualification evidence'} />
+                        ) : <p className="text-xs font-semibold text-textMain/75">Verified qualification attached to request.</p>;
+                      })()}
+                    </div>
+                  ) : booking.certificateName ? (
+                    <p className="pt-2 text-xs text-textMain/75">Legacy certificate: {booking.certificateName}</p>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button onClick={() => handleOwnerDecision(booking.id, 'Approved')} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent hover:bg-primary text-white text-sm font-bold shadow-sm transition-colors">
@@ -374,10 +413,7 @@ export default function AdminDashboard() {
               <div>
                 <label className="block font-bold text-textMain mb-2 text-sm">Category</label>
                 <select value={newEqForm.category} onChange={e => setNewEqForm(p => ({...p, category: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent text-sm transition-colors">
-                  <option>3D Printing & Makerspace</option>
-                  <option>Cameras & Media</option>
-                  <option>Drones & Robotics</option>
-                  <option>Lab Instruments</option>
+                  {EQUIPMENT_CATEGORIES.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
                 </select>
               </div>
               <div>
@@ -386,14 +422,57 @@ export default function AdminDashboard() {
               </div>
             </div>
             
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-bold text-textMain mb-2 text-sm">Subcategory</label>
+                <input type="text" maxLength={120} placeholder="e.g., Resin printer" value={newEqForm.subcategory} onChange={e => setNewEqForm(p => ({...p, subcategory: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent" />
+              </div>
+              <div>
+                <label className="block font-bold text-textMain mb-2 text-sm">Qualification requirement</label>
+                <select value={newEqForm.qualificationType} onChange={e => setNewEqForm(p => ({...p, qualificationType: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
+                  {QUALIFICATION_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}
+                </select>
+              </div>
+            </div>
+
             <div>
-              <label className="block font-bold text-textMain mb-2 text-sm">Required Training Certificate (Comma-separated)</label>
+              <label className="block font-bold text-textMain mb-2 text-sm">Equipment description</label>
+              <textarea rows={3} maxLength={2000} value={newEqForm.description} onChange={e => setNewEqForm(p => ({...p, description: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent" placeholder="Describe the equipment and its intended use." />
+            </div>
+
+            <div>
+              <label className="block font-bold text-textMain mb-2 text-sm">Qualification and training instructions</label>
+              <textarea rows={2} maxLength={1200} value={newEqForm.qualificationInstructions} onChange={e => setNewEqForm(p => ({...p, qualificationInstructions: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent text-sm transition-colors" placeholder="Explain what evidence, training, or practical assessment is required." />
+            </div>
+
+            <div>
+              <label className="block font-bold text-textMain mb-2 text-sm">Required training names (comma-separated)</label>
               <input type="text" placeholder="e.g., Lab Safety Orientation, Resin Printer Intro" value={newEqForm.requirements} onChange={e => setNewEqForm(p => ({...p, requirements: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent text-sm transition-colors" />
             </div>
 
             <div>
-              <label className="block font-bold text-textMain mb-2 text-sm">Pickup Checklist Items (Comma-separated)</label>
+              <label className="block font-bold text-textMain mb-2 text-sm">Pickup checklist items (comma-separated)</label>
               <input type="text" placeholder="e.g., Tank is clean, Build plate attached, Power cable present" value={newEqForm.checklist} onChange={e => setNewEqForm(p => ({...p, checklist: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent text-sm transition-colors" />
+            </div>
+
+            <div>
+              <label className="block font-bold text-textMain mb-2 text-sm">Safety instructions</label>
+              <textarea rows={2} maxLength={2000} value={newEqForm.safetyInstructions} onChange={e => setNewEqForm(p => ({...p, safetyInstructions: e.target.value}))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-surface shadow-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent text-sm transition-colors" placeholder="List essential operating and protective-equipment guidance." />
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-secondary/50 p-4">
+              <label className="flex items-start gap-3 text-sm text-textMain">
+                <input type="checkbox" checked={newEqForm.trainingRequired} onChange={e => setNewEqForm(p => ({...p, trainingRequired: e.target.checked}))} className="mt-1 accent-accent" />
+                <span><strong>Training is required before access</strong><span className="mt-0.5 block text-xs text-textMain/70">Borrowers must submit training proof or complete the required training.</span></span>
+              </label>
+              <label className="flex items-start gap-3 text-sm text-textMain">
+                <input type="checkbox" checked={newEqForm.supervisedUseAllowed} onChange={e => setNewEqForm(p => ({...p, supervisedUseAllowed: e.target.checked}))} className="mt-1 accent-accent" />
+                <span><strong>Allow supervised access</strong><span className="mt-0.5 block text-xs text-textMain/70">A borrower without verified qualification may request owner-supervised use.</span></span>
+              </label>
+              <label className="flex items-start gap-3 text-sm text-textMain">
+                <input type="checkbox" checked={newEqForm.qualificationReusable} onChange={e => setNewEqForm(p => ({...p, qualificationReusable: e.target.checked}))} className="mt-1 accent-accent" />
+                <span><strong>Allow qualification reuse</strong><span className="mt-0.5 block text-xs text-textMain/70">You can explicitly share a verified qualification with your matching equipment.</span></span>
+              </label>
             </div>
 
             <div className="pt-4 flex justify-end gap-3 shrink-0">

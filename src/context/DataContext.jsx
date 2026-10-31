@@ -3,6 +3,7 @@ import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestor
 import { db, firebaseConfigError } from '../firebase';
 import { useAuth } from './AuthContext';
 import { hasRole } from '../utils/permissions';
+import { getEquipmentCategoryId } from '../config/equipmentCategories';
 
 export const DataContext = createContext();
 
@@ -12,6 +13,8 @@ export const DataProvider = ({ children }) => {
   const [bookings, setBookings] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [reports, setReports] = useState([]);
+  const [qualifications, setQualifications] = useState([]);
+  const [qualificationGrants, setQualificationGrants] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(firebaseConfigError);
@@ -27,6 +30,8 @@ export const DataProvider = ({ children }) => {
       setBookings([]);
       setAuditLogs([]);
       setReports([]);
+      setQualifications([]);
+      setQualificationGrants([]);
       setNotifications([]);
       setLoading(false);
       return undefined;
@@ -34,9 +39,15 @@ export const DataProvider = ({ children }) => {
 
     setLoading(true);
     setError('');
+    setBookings([]);
+    setAuditLogs([]);
+    setReports([]);
+    setQualifications([]);
+    setQualificationGrants([]);
+    setNotifications([]);
     let active = true;
     const roles = ['user', 'admin'].filter((role) => hasRole(user, role));
-    let remainingInitialSnapshots = 1 + roles.length * 3 + (hasRole(user, 'admin') ? 1 : 0);
+    let remainingInitialSnapshots = 1 + roles.length * 5 + (hasRole(user, 'admin') ? 1 : 0);
     const initializedCollections = new Set();
     const snapshotVersions = new Map();
     const queryDocuments = new Map();
@@ -51,8 +62,18 @@ export const DataProvider = ({ children }) => {
         try {
           const documents = await Promise.all(snapshot.docs.map(async (entry) => {
             const data = entry.data();
-            if (collectionName === 'resources' && data.imageData) {
-              data.image = data.imageData;
+            if (collectionName === 'resources') {
+              if (data.imageData) data.image = data.imageData;
+              data.categoryId = getEquipmentCategoryId(data.categoryId || data.category);
+              if (!data.qualificationType) {
+                data.qualificationType = data.requirements?.length ? 'training_proof' : 'none';
+                data.trainingRequired = Boolean(data.requirements?.length);
+                data.qualificationInstructions = data.requirements?.length
+                  ? 'Submit current training proof for the listed equipment requirements.'
+                  : '';
+              }
+              data.supervisedUseAllowed ??= false;
+              data.qualificationReusable ??= false;
             } else if (collectionName === 'equipmentReports' && data.photoData) {
               data.photoUrl = data.photoData;
             } else if (collectionName === 'bookings') {
@@ -103,6 +124,15 @@ export const DataProvider = ({ children }) => {
         where(ownerField, '==', user.uid),
         orderBy('createdAt', 'desc')
       ], setReports);
+      const qualificationOwnerField = role === 'admin' ? 'ownerUid' : 'userId';
+      subscribe('qualifications', role, [
+        where(qualificationOwnerField, '==', user.uid),
+        orderBy('createdAt', 'desc')
+      ], setQualifications);
+      subscribe('qualificationGrants', role, [
+        where(qualificationOwnerField, '==', user.uid),
+        orderBy('createdAt', 'desc')
+      ], setQualificationGrants);
     }
     if (hasRole(user, 'admin')) {
       subscribe('notifications', 'admin', [
@@ -125,6 +155,8 @@ export const DataProvider = ({ children }) => {
       bookings,
       auditLogs,
       reports,
+      qualifications,
+      qualificationGrants,
       notifications,
       loading,
       error
