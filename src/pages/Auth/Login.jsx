@@ -69,9 +69,6 @@ export default function Login() {
         <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-textMain">
           UseEquip <span className="text-accent">Campus OS</span>
         </h1>
-        <p className="text-textMain/80 text-lg max-w-xl mx-auto">
-          Accountable equipment sharing and lab management platform.
-        </p>
       </div>
 
       {/* Login Card */}
