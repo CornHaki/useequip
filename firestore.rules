@@ -1,0 +1,583 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profile(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function activeAccount() {
+      return signedIn() && profile(request.auth.uid).get('active', true) == true;
+    }
+
+    function hasUserRole(account) {
+      return account.get('role', '') == 'user';
+    }
+
+    function hasAdminRole(account) {
+      return account.get('role', '') == 'admin';
+    }
+
+    function isOwner(ownerUid) {
+      return activeAccount()
+        && hasAdminRole(profile(request.auth.uid))
+        && ownerUid == request.auth.uid;
+    }
+
+    function resourcePath(resourceId) {
+      return /databases/$(database)/documents/resources/$(resourceId);
+    }
+
+    function bookingPath(bookingId) {
+      return /databases/$(database)/documents/bookings/$(bookingId);
+    }
+
+    function auditPath(auditId) {
+      return /databases/$(database)/documents/auditLogs/$(auditId);
+    }
+
+    function hasAuditAfter(relatedId, relatedType, actionLabel, ownerUid) {
+      let audit = getAfter(auditPath(relatedId + '_' + actionLabel)).data;
+      return audit.actorUid == request.auth.uid
+        && audit.relatedId == relatedId
+        && audit.relatedType == relatedType
+        && audit.actionLabel == actionLabel
+        && audit.ownerUid == ownerUid;
+    }
+
+    function validBookingAudit(bookingId, actionLabel) {
+      let booking = getAfter(bookingPath(bookingId)).data;
+      return (
+        actionLabel == 'Booking Requested'
+        && booking.userId == request.auth.uid
+        && booking.status in ['Requested', 'Waitlisted']
+        && booking.createdAt == request.time
+      ) || (
+        actionLabel == 'Booking Cancelled'
+        && booking.userId == request.auth.uid
+        && booking.status == 'Cancelled'
+        && booking.cancelledByUid == request.auth.uid
+      ) || (
+        actionLabel == 'Request Cleared'
+        && booking.userId == request.auth.uid
+        && booking.status in ['Rejected', 'Completed']
+        && booking.clearedByUserAt == request.time
+      ) || (
+        actionLabel == 'Request Approved'
+        && booking.ownerUid == request.auth.uid
+        && booking.status == 'Approved'
+        && booking.decisionAt == request.time
+      ) || (
+        actionLabel == 'Request Waitlisted'
+        && booking.ownerUid == request.auth.uid
+        && booking.status == 'Waitlisted'
+        && booking.decisionAt == request.time
+      ) || (
+        actionLabel == 'Request Declined'
+        && booking.ownerUid == request.auth.uid
+        && booking.status == 'Rejected'
+        && booking.decisionAt == request.time
+      ) || (
+        actionLabel == 'Equipment Picked Up'
+        && booking.userId == request.auth.uid
+        && booking.status == 'Checked-Out'
+        && booking.checkInData.timestamp == request.time
+      ) || (
+        actionLabel == 'Equipment Returned'
+        && booking.userId == request.auth.uid
+        && booking.status == 'Returned'
+        && booking.checkOutData.timestamp == request.time
+      ) || (
+        actionLabel == 'Return Inspected and Booking Completed'
+        && booking.ownerUid == request.auth.uid
+        && booking.status == 'Completed'
+        && booking.returnCondition.inspectedAt == request.time
+      );
+    }
+
+    function validReportAudit(reportId, actionLabel) {
+      let report = getAfter(
+        /databases/$(database)/documents/equipmentReports/$(reportId)
+      ).data;
+      return (
+        actionLabel == 'Equipment Report Submitted'
+        && report.userId == request.auth.uid
+        && report.status == 'Pending'
+        && report.createdAt == request.time
+      ) || (
+        actionLabel == 'Equipment Report Updated to ' + report.status
+        && report.ownerUid == request.auth.uid
+        && report.status in ['Under Review', 'Resolved', 'Rejected']
+        && report.updatedAt == request.time
+      );
+    }
+
+    function bookingResourceIsReserved(bookingId, resourceId) {
+      return getAfter(resourcePath(resourceId)).data.get('reservedByBookingId', null) == bookingId;
+    }
+
+    function resourceReservationReleased(bookingId, resourceId) {
+      return getAfter(resourcePath(resourceId)).data.get('reservedByBookingId', null) == null
+        && getAfter(bookingPath(bookingId)).data.status in ['Cancelled', 'Completed'];
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.role in ['user', 'admin']
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.get('active', true) == true
+        && request.resource.data.get('contactPhone', '').size() <= 40
+        && request.resource.data.get('department', '').size() <= 120
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'name', 'role', 'active', 'contactPhone',
+          'department', 'activeBookings', 'createdAt'
+        ]);
+
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    match /resources/{resourceId} {
+      allow read: if activeAccount();
+
+      allow create: if activeAccount()
+        && hasAdminRole(profile(request.auth.uid))
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerName == profile(request.auth.uid).name
+        && request.resource.data.ownerName is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.category is string
+        && request.resource.data.location is string
+        && request.resource.data.imageData is string
+        && request.resource.data.imageData.size() <= 250000
+        && request.resource.data.status == 'Available'
+        && request.resource.data.get('reservedByBookingId', null) == null
+        && request.resource.data.archived == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'name', 'category', 'location', 'imageData', 'requirements',
+          'checklist', 'usageRules', 'specs', 'status', 'ownerUid',
+          'ownerName', 'department', 'archived', 'createdAt', 'updatedAt'
+        ]);
+
+      allow update: if (
+        isOwner(resource.data.ownerUid)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'category', 'location', 'imageData', 'requirements', 'checklist',
+          'usageRules', 'updatedAt', 'status', 'archived', 'archivedAt',
+          'archivedByUid', 'reservedByBookingId'
+        ])
+        && (
+          !request.resource.data.keys().hasAny(['imageData'])
+          || (
+            request.resource.data.imageData is string
+            && request.resource.data.imageData.size() <= 250000
+          )
+        )
+        && (
+          resource.data.get('reservedByBookingId', null) == null
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'updatedAt', 'reservedByBookingId'
+          ])
+        )
+        && (
+          request.resource.data.get('reservedByBookingId', null)
+            == resource.data.get('reservedByBookingId', null)
+          || (
+            resource.data.get('reservedByBookingId', null) == null
+            && request.resource.data.get('reservedByBookingId', null) is string
+            && getAfter(bookingPath(request.resource.data.reservedByBookingId)).data.status == 'Approved'
+            && getAfter(bookingPath(request.resource.data.reservedByBookingId)).data.resourceId == resourceId
+          )
+          || (
+            request.resource.data.get('reservedByBookingId', null) == null
+            && resource.data.get('reservedByBookingId', null) is string
+            && resourceReservationReleased(resource.data.reservedByBookingId, resourceId)
+          )
+        )
+        && (
+          request.resource.data.status == resource.data.status
+          || (
+            request.resource.data.status in ['Available', 'Maintenance']
+            && resource.data.get('reservedByBookingId', null) == null
+          )
+          || (
+            request.resource.data.status == 'In Use'
+            && resource.data.get('reservedByBookingId', null) is string
+            && getAfter(bookingPath(resource.data.reservedByBookingId)).data.status == 'Checked-Out'
+          )
+          || (
+            request.resource.data.status in ['Available', 'Maintenance']
+            && resource.data.get('reservedByBookingId', null) is string
+            && resourceReservationReleased(resource.data.reservedByBookingId, resourceId)
+          )
+        )
+      ) || (
+        activeAccount()
+        && resource.data.status == 'Available'
+        && request.resource.data.status == 'In Use'
+        && resource.data.get('reservedByBookingId', null) is string
+        && request.resource.data.get('reservedByBookingId', null)
+          == resource.data.reservedByBookingId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && getAfter(bookingPath(resource.data.reservedByBookingId)).data.userId == request.auth.uid
+        && getAfter(bookingPath(resource.data.reservedByBookingId)).data.status == 'Checked-Out'
+        && getAfter(bookingPath(resource.data.reservedByBookingId)).data.resourceId == resourceId
+      ) || (
+        activeAccount()
+        && resource.data.status == 'Available'
+        && request.resource.data.status == 'Available'
+        && resource.data.get('reservedByBookingId', null) is string
+        && request.resource.data.get('reservedByBookingId', null) == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'updatedAt', 'reservedByBookingId'
+        ])
+        && resourceReservationReleased(resource.data.reservedByBookingId, resourceId)
+        && getAfter(bookingPath(resource.data.reservedByBookingId)).data.userId == request.auth.uid
+        && getAfter(bookingPath(resource.data.reservedByBookingId)).data.ownerUid
+          == resource.data.ownerUid
+        && getAfter(bookingPath(resource.data.reservedByBookingId)).data.resourceId == resourceId
+      );
+
+      allow delete: if false;
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if activeAccount()
+        && (resource.data.userId == request.auth.uid
+          || isOwner(resource.data.ownerUid));
+
+      allow create: if activeAccount()
+        && hasUserRole(profile(request.auth.uid))
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status in ['Requested', 'Waitlisted']
+        && request.resource.data.ownerUid != request.auth.uid
+        && request.resource.data.resourceId is string
+        && request.resource.data.userName == profile(request.auth.uid).name
+        && get(resourcePath(request.resource.data.resourceId)).data.ownerUid
+          == request.resource.data.ownerUid
+        && get(resourcePath(request.resource.data.resourceId)).data.name
+          == request.resource.data.resourceName
+        && get(resourcePath(request.resource.data.resourceId)).data.get('archived', false) == false
+        && request.resource.data.status == (
+          get(resourcePath(request.resource.data.resourceId)).data.status == 'Available'
+          && get(resourcePath(request.resource.data.resourceId)).data.get('reservedByBookingId', null) == null
+            ? 'Requested'
+            : 'Waitlisted'
+        )
+        && request.resource.data.purpose is string
+        && request.resource.data.purpose.size() > 0
+        && request.resource.data.purpose.size() <= 2000
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'resourceId', 'resourceName', 'ownerUid', 'userId', 'userName',
+          'dateSlot', 'purpose', 'certificateName', 'status', 'createdAt',
+          'updatedAt', 'checkInData', 'checkOutData', 'returnCondition',
+          'clearedByUserAt'
+        ])
+        && hasAuditAfter(
+          bookingId,
+          'booking',
+          'Booking Requested',
+          request.resource.data.ownerUid
+        );
+
+      allow update: if activeAccount()
+        && (
+          (
+            resource.data.userId == request.auth.uid
+            && request.resource.data.status == 'Cancelled'
+            && resource.data.status in ['Requested', 'Waitlisted', 'Approved']
+            && request.resource.data.cancellationReason is string
+            && request.resource.data.cancellationReason.size() > 0
+            && request.resource.data.cancellationReason.size() <= 1000
+            && request.resource.data.cancelledByUid == request.auth.uid
+            && request.resource.data.cancelledByName == profile(request.auth.uid).name
+            && request.resource.data.cancelledAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'cancellationReason', 'cancelledAt', 'cancelledByUid',
+              'cancelledByName', 'updatedAt'
+            ])
+            && (
+              resource.data.status != 'Approved'
+              || resourceReservationReleased(bookingId, resource.data.resourceId)
+            )
+            && hasAuditAfter(
+              bookingId,
+              'booking',
+              'Booking Cancelled',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.userId == request.auth.uid
+            && resource.data.status in ['Rejected', 'Completed']
+            && request.resource.data.status == resource.data.status
+            && request.resource.data.clearedByUserAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'clearedByUserAt', 'updatedAt'
+            ])
+            && hasAuditAfter(
+              bookingId,
+              'booking',
+              'Request Cleared',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            isOwner(resource.data.ownerUid)
+            && resource.data.status in ['Requested', 'Waitlisted']
+            && request.resource.data.status in ['Approved', 'Waitlisted', 'Rejected']
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.decisionAt == request.time
+            && request.resource.data.approvedByUid == request.auth.uid
+            && request.resource.data.approvedBy == profile(request.auth.uid).name
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'approvedByUid', 'approvedBy', 'decisionAt',
+              'rejectionReason', 'updatedAt'
+            ])
+            && (
+              request.resource.data.status != 'Approved'
+              || bookingResourceIsReserved(bookingId, resource.data.resourceId)
+            )
+            && (
+              request.resource.data.status != 'Rejected'
+              || request.resource.data.get('rejectionReason', '').size() > 0
+            )
+            && hasAuditAfter(
+              bookingId,
+              'booking',
+              request.resource.data.status == 'Rejected'
+                ? 'Request Declined'
+                : 'Request ' + request.resource.data.status,
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.userId == request.auth.uid
+            && resource.data.status == 'Approved'
+            && request.resource.data.status == 'Checked-Out'
+            && request.resource.data.checkInData is map
+            && request.resource.data.checkInData.timestamp == request.time
+            && request.resource.data.checkInData.photoData.size() > 0
+            && request.resource.data.checkInData.photoData.size() <= 250000
+            && request.resource.data.checkInData.checklistVerified == true
+            && getAfter(resourcePath(resource.data.resourceId)).data.status == 'In Use'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'updatedAt', 'checkInData'
+            ])
+            && hasAuditAfter(
+              bookingId,
+              'booking',
+              'Equipment Picked Up',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            resource.data.userId == request.auth.uid
+            && resource.data.status == 'Checked-Out'
+            && request.resource.data.status == 'Returned'
+            && request.resource.data.checkOutData is map
+            && request.resource.data.checkOutData.timestamp == request.time
+            && request.resource.data.checkOutData.photoData.size() > 0
+            && request.resource.data.checkOutData.photoData.size() <= 250000
+            && request.resource.data.checkOutData.checklistVerified == true
+            && request.resource.data.returnCondition is map
+            && request.resource.data.returnCondition.assessedAt == request.time
+            && request.resource.data.returnCondition.assessedByUid == request.auth.uid
+            && request.resource.data.returnCondition.borrowerAssessment in [
+              'Good', 'Damaged', 'Maintenance'
+            ]
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'updatedAt', 'checkOutData', 'returnCondition',
+              'incidentReport'
+            ])
+            && hasAuditAfter(
+              bookingId,
+              'booking',
+              'Equipment Returned',
+              resource.data.ownerUid
+            )
+          )
+          || (
+            isOwner(resource.data.ownerUid)
+            && resource.data.status == 'Returned'
+            && request.resource.data.status == 'Completed'
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.returnCondition is map
+            && request.resource.data.returnCondition.ownerAssessment in [
+              'Good Condition', 'Damaged', 'Maintenance'
+            ]
+            && request.resource.data.returnCondition.inspectedByUid == request.auth.uid
+            && getAfter(resourcePath(resource.data.resourceId))
+              .data.get('reservedByBookingId', null) == null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'updatedAt', 'returnCondition'
+            ])
+            && hasAuditAfter(
+              bookingId,
+              'booking',
+              'Return Inspected and Booking Completed',
+              resource.data.ownerUid
+            )
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /equipmentReports/{reportId} {
+      allow read: if activeAccount()
+        && (resource.data.userId == request.auth.uid
+          || isOwner(resource.data.ownerUid));
+
+      allow create: if activeAccount()
+        && hasUserRole(profile(request.auth.uid))
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.userName == profile(request.auth.uid).name
+        && request.resource.data.ownerUid != request.auth.uid
+        && get(resourcePath(request.resource.data.resourceId)).data.ownerUid
+          == request.resource.data.ownerUid
+        && get(resourcePath(request.resource.data.resourceId)).data.name
+          == request.resource.data.resourceName
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.description is string
+        && request.resource.data.description.size() > 0
+        && request.resource.data.description.size() <= 3000
+        && request.resource.data.category is string
+        && request.resource.data.category.size() > 0
+        && request.resource.data.photoData.size() <= 250000
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'resourceId', 'resourceName', 'ownerUid', 'userId', 'userName',
+          'category', 'description', 'photoData', 'status', 'createdAt',
+          'updatedAt'
+        ])
+        && hasAuditAfter(
+          reportId,
+          'equipmentReport',
+          'Equipment Report Submitted',
+          request.resource.data.ownerUid
+        );
+
+      allow update: if isOwner(resource.data.ownerUid)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && (
+          (
+            resource.data.status == 'Pending'
+            && request.resource.data.status in ['Under Review', 'Resolved', 'Rejected']
+          )
+          || (
+            resource.data.status == 'Under Review'
+            && request.resource.data.status in ['Resolved', 'Rejected']
+          )
+        )
+        && request.resource.data.reviewedByUid == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'updatedAt', 'reviewedByUid'
+        ])
+        && hasAuditAfter(
+          reportId,
+          'equipmentReport',
+          'Equipment Report Updated to ' + request.resource.data.status,
+          resource.data.ownerUid
+        );
+
+      allow delete: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if activeAccount()
+        && (resource.data.userId == request.auth.uid
+          || isOwner(resource.data.ownerUid));
+      allow create: if activeAccount()
+        && logId == request.resource.data.relatedId + '_' + request.resource.data.actionLabel
+        && (request.resource.data.userId == request.auth.uid
+          || isOwner(request.resource.data.ownerUid))
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.relatedId is string
+        && request.resource.data.ownerUid is string
+        && request.resource.data.userId is string
+        && request.resource.data.relatedType in ['booking', 'equipmentReport']
+        && request.resource.data.role in ['Owner', 'Borrower']
+        && request.resource.data.createdAt == request.time
+        && (
+          (
+            request.resource.data.relatedType == 'booking'
+            && getAfter(bookingPath(request.resource.data.relatedId)).data.userId
+              == request.resource.data.userId
+            && getAfter(bookingPath(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.ownerUid
+            && validBookingAudit(
+              request.resource.data.relatedId,
+              request.resource.data.actionLabel
+            )
+          )
+          || (
+            request.resource.data.relatedType == 'equipmentReport'
+            && getAfter(
+              /databases/$(database)/documents/equipmentReports/$(request.resource.data.relatedId)
+            ).data.userId == request.resource.data.userId
+            && getAfter(
+              /databases/$(database)/documents/equipmentReports/$(request.resource.data.relatedId)
+            ).data.ownerUid == request.resource.data.ownerUid
+            && validReportAudit(
+              request.resource.data.relatedId,
+              request.resource.data.actionLabel
+            )
+          )
+        );
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if activeAccount() && resource.data.recipientUid == request.auth.uid;
+      allow create: if activeAccount()
+        && notificationId == request.resource.data.relatedId + '_' + request.resource.data.type
+        && request.resource.data.recipientUid is string
+        && request.resource.data.read == false
+        && request.resource.data.createdAt == request.time
+        && (
+          (
+            request.resource.data.type == 'booking-request'
+            && getAfter(bookingPath(request.resource.data.relatedId)).data.userId == request.auth.uid
+            && getAfter(bookingPath(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.recipientUid
+          )
+          || (
+            request.resource.data.type in [
+              'booking-cancelled', 'equipment-returned'
+            ]
+            && get(bookingPath(request.resource.data.relatedId)).data.userId == request.auth.uid
+            && get(bookingPath(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.recipientUid
+          )
+          || (
+            request.resource.data.type == 'equipment-report'
+            && getAfter(/databases/$(database)/documents/equipmentReports/$(request.resource.data.relatedId)).data.userId == request.auth.uid
+            && getAfter(/databases/$(database)/documents/equipmentReports/$(request.resource.data.relatedId)).data.ownerUid
+              == request.resource.data.recipientUid
+          )
+        );
+      allow update, delete: if false;
+    }
+  }
+}

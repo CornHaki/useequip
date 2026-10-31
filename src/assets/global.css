@@ -1,0 +1,214 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  color: #29352f;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background-color: #e8efea;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  z-index: 0;
+  inset: -18%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 18% 24%, rgba(101, 168, 135, 0.13), transparent 43%),
+    radial-gradient(ellipse at 82% 68%, rgba(23, 76, 60, 0.08), transparent 46%),
+    radial-gradient(ellipse at 52% 96%, rgba(101, 168, 135, 0.07), transparent 44%);
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  animation: ambient-drift 38s ease-in-out infinite alternate;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes ambient-drift {
+  from {
+    transform: translate3d(-1.5%, -1%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(1.5%, 1%, 0) scale(1.025);
+  }
+}
+
+.route-transition {
+  opacity: 1;
+  transition: opacity 150ms ease;
+}
+
+.route-transition-exiting {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.route-transition-entering {
+  animation: route-enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes route-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.role-transition-enter {
+  animation: role-enter 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes role-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.content-enter {
+  animation: content-enter 180ms ease-out both;
+}
+
+@keyframes content-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-backdrop {
+  animation: backdrop-enter 160ms ease-out both;
+}
+
+.modal-backdrop-closing {
+  pointer-events: none;
+  animation: backdrop-exit 150ms ease-in both;
+}
+
+.modal-dialog {
+  animation: dialog-enter 190ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.modal-dialog-closing {
+  animation: dialog-exit 150ms ease-in both;
+}
+
+@keyframes backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes backdrop-exit {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes dialog-enter {
+  from { opacity: 0; transform: scale(0.98) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes dialog-exit {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.985) translateY(4px); }
+}
+
+.toast-transition {
+  animation: toast-enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.toast-exiting {
+  animation: toast-exit 160ms ease-in both;
+  pointer-events: none;
+}
+
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-exit {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(5px); }
+}
+
+body.tab-inactive::before {
+  animation-play-state: paused;
+}
+
+::selection {
+  color: #fff;
+  background: #65a887;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-nav-scroll {
+  scrollbar-width: none;
+}
+
+.mobile-nav-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #65a887;
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #E8EFEA;
+}
+::-webkit-scrollbar-thumb {
+  background: #65A887;
+  border: 2px solid #E8EFEA;
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
