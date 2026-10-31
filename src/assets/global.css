@@ -31,6 +31,15 @@ body::before {
   animation: ambient-drift 38s ease-in-out infinite alternate;
 }
 
+.particle-background {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  pointer-events: none;
+  opacity: 1;
+}
+
 #root {
   position: relative;
   z-index: 1;

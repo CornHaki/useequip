@@ -215,7 +215,7 @@ export default function EquipmentDetail() {
                 {['certificate', 'training'].includes(qualificationSubmissionType) && (
                   <label className="block text-xs font-bold text-textMain">
                     Evidence (PDF, JPG, PNG, or WebP; private, size limited)
-                    <input type="file" required accept=".pdf,image/jpeg,image/png,image/webp" onChange={event => setQualificationFile(event.target.files?.[0] || null)} className="mt-2 block w-full text-sm font-normal text-textMain file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:font-semibold" />
+                    <input type="file" required accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={event => setQualificationFile(event.target.files?.[0] || null)} className="mt-2 block w-full text-sm font-normal text-textMain file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:font-semibold" />
                     {qualificationFile && <span className="mt-1 block text-textMain/70">{qualificationFile.name}</span>}
                   </label>
                 )}

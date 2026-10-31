@@ -5,6 +5,7 @@ import { ToastProvider } from './context/ToastContext';
 import { DataContext, DataProvider } from './context/DataContext';
 import Navbar from './components/layout/Navbar';
 import Footer from './components/layout/Footer';
+import ParticleBackground from './components/layout/ParticleBackground';
 
 // Pages
 import RoleSelection from './pages/Auth/RoleSelection';
@@ -127,6 +128,7 @@ export default function App() {
       <ToastProvider>
         <DataProvider>
           <BrowserRouter>
+            <ParticleBackground />
             <AppContent />
           </BrowserRouter>
         </DataProvider>
