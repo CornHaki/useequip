@@ -11,6 +11,7 @@ export default function RoleSelection() {
         <div className="text-center space-y-5">
           <div className="w-16 h-16 rounded-2xl bg-accent mx-auto flex items-center justify-center shadow-lg mb-6"><ShieldCheck className="w-8 h-8 text-white" /></div>
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-textMain">UseEquip <span className="text-accent">Campus OS</span></h1>
+          <p className="text-textMain/80 text-lg max-w-xl mx-auto">Accountable equipment sharing and lab management platform.</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
           <button onClick={() => navigate('/login/user')} className="p-7 sm:p-8 rounded-2xl bg-surface border border-slate-200 shadow-sm hover:border-accent/60 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group">
